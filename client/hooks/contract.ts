@@ -25,21 +25,28 @@ import {
 // CONSTANTS — Update these for your contract
 // ============================================================
 
-/** Your deployed Soroban contract ID */
-export const CONTRACT_ADDRESS =
-  "CAHR6ZKV2N7U5UMU3HQICGMNZ37YRNAXATPXQTOOPYION3RORD6C2WNR";
+const USE_MAINNET = process.env.NEXT_PUBLIC_USE_MAINNET === "true";
 
-/** Network passphrase (testnet by default) */
-export const NETWORK_PASSPHRASE = Networks.TESTNET;
+/** Your deployed Soroban contract ID */
+export const CONTRACT_ADDRESS = USE_MAINNET
+  ? (process.env.NEXT_PUBLIC_MAINNET_CONTRACT_ADDRESS ?? "")
+  : "CAHR6ZKV2N7U5UMU3HQICGMNZ37YRNAXATPXQTOOPYION3RORD6C2WNR";
+
+/** Network passphrase */
+export const NETWORK_PASSPHRASE = USE_MAINNET ? Networks.PUBLIC : Networks.TESTNET;
 
 /** Soroban RPC URL */
-export const RPC_URL = "https://soroban-testnet.stellar.org";
+export const RPC_URL = USE_MAINNET
+  ? (process.env.NEXT_PUBLIC_MAINNET_RPC_URL ?? "https://soroban-mainnet.stellar.org")
+  : "https://soroban-testnet.stellar.org";
 
 /** Horizon URL */
-export const HORIZON_URL = "https://horizon-testnet.stellar.org";
+export const HORIZON_URL = USE_MAINNET
+  ? "https://horizon.stellar.org"
+  : "https://horizon-testnet.stellar.org";
 
 /** Network name for Freighter */
-export const NETWORK = "TESTNET";
+export const NETWORK = USE_MAINNET ? "PUBLIC" : "TESTNET";
 
 // ============================================================
 // RPC Server Instance
@@ -359,6 +366,68 @@ export async function removeScore(
     true
   ) as { txHash: string };
   return res.txHash;
+}
+
+/**
+ * Submit a credit score using fee sponsorship (gasless — user pays no XLM fees).
+ * The inner transaction is signed by the user via Freighter, then the server
+ * wraps it in a FeeBumpTransaction and pays the fee using SPONSOR_SECRET_KEY.
+ *
+ * Falls back to normal submitScore if the /api/fee-bump endpoint is unavailable.
+ */
+export async function submitScoreGasless(
+  caller: string,
+  user: string,
+  score: number,
+  evaluator: string
+): Promise<string> {
+  const contract = new Contract(CONTRACT_ADDRESS);
+  const account = await server.getAccount(caller);
+
+  const tx = new TransactionBuilder(account, {
+    fee: "100",
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(
+      contract.call(
+        "submit_score",
+        toScValAddress(user),
+        toScValU32(score),
+        toScValAddress(evaluator)
+      )
+    )
+    .setTimeout(30)
+    .build();
+
+  // Simulate to get footprint + auth
+  const simulated = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(simulated)) {
+    throw new Error(
+      `Simulation failed: ${(simulated as rpc.Api.SimulateTransactionErrorResponse).error}`
+    );
+  }
+
+  const prepared = rpc.assembleTransaction(tx, simulated).build();
+
+  // User signs only the inner tx (they pay nothing — fee bump covers it)
+  const signResult = await signTransaction(prepared.toXDR(), {
+    networkPassphrase: NETWORK_PASSPHRASE,
+  });
+  if (signResult.error) throw new Error(signResult.error);
+
+  // Send to our fee-bump API endpoint
+  const res = await fetch("/api/fee-bump", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ innerXdr: signResult.signedTxXdr }),
+  });
+
+  const data = (await res.json()) as { hash?: string; error?: string };
+  if (!res.ok || !data.hash) {
+    throw new Error(data.error ?? "Fee bump submission failed");
+  }
+
+  return data.hash;
 }
 
 export { nativeToScVal, scValToNative, Address, xdr };

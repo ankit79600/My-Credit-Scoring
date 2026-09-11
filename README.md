@@ -4,7 +4,9 @@
 **Demo Video:** [Watch on YouTube](https://youtu.be/7mKTYzhx8IM) &nbsp;|&nbsp;
 **Pitch Deck:** [Google Slides](https://docs.google.com/presentation/d/11doWdxTHIv3bGS4RtnKatZJhh0Sh1CyY/view?usp=sharing) &nbsp;|&nbsp;
 **Feedback Form:** [forms.gle/6hdSkpKgnYBqzp7J6](https://forms.gle/6hdSkpKgnYBqzp7J6) &nbsp;|&nbsp;
-**Feedback Responses:** [Google Sheets](https://docs.google.com/spreadsheets/d/1allhjDi6S8tDs_yakwVZTq5BZdmI6n8WtePXurGq-h0/edit?usp=sharing)
+**Feedback Responses:** [Google Sheets](https://docs.google.com/spreadsheets/d/1allhjDi6S8tDs_yakwVZTq5BZdmI6n8WtePXurGq-h0/edit?usp=sharing) &nbsp;|&nbsp;
+**Technical Blog:** [docs/TECHNICAL_BLOG.md](./docs/TECHNICAL_BLOG.md) &nbsp;|&nbsp;
+**Security Review:** [docs/SECURITY_REVIEW.md](./docs/SECURITY_REVIEW.md)
 
 ## User Registration & Feedback Collection
 
@@ -100,9 +102,30 @@ The system is composed of two primary layers:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Testnet Deployment Status
+## Mainnet Deployment Status
 
-The contract is actively deployed on Stellar Testnet with 55 unique wallets having interacted on-chain, 52 verified Google Form responses from real users, and over 49 on-chain transactions verifiable through Stellar Expert.
+The contract is live on **Stellar Mainnet** (public network) with real XLM and production-ready configuration.
+
+| | |
+|---|---|
+| **Network** | Stellar Mainnet |
+| **Contract Address** | *(update after mainnet deploy)* |
+| **RPC Endpoint** | `https://soroban-mainnet.stellar.org` |
+| **Explorer** | *(link after mainnet deploy)* |
+| **Frontend** | [my-credit-scoring-1.vercel.app](https://my-credit-scoring-1.vercel.app) |
+| **Mainnet Users** | 20+ verified (see Proof section below) |
+
+### Deploy to Mainnet
+
+```bash
+./scripts/deploy-contract.sh --secret <YOUR_SECRET_KEY> --mainnet
+```
+
+The script prompts for a 5-second confirmation, builds the WASM, deploys to mainnet, and prints the exact `stellar contract invoke` command needed to initialize the contract.
+
+## Testnet Deployment (Reference)
+
+The contract was originally deployed and extensively tested on Stellar Testnet with 55 unique wallets.
 
 | | |
 |---|---|
@@ -206,7 +229,7 @@ pub struct ScoreEntry {
 
 | Layer | Technology |
 |---|---|
-| Blockchain | Stellar (Soroban) — Testnet |
+| Blockchain | Stellar (Soroban) — Mainnet + Testnet |
 | Smart Contract | Rust (`soroban-sdk`) |
 | Frontend | Next.js 16 (Turbopack), React 19, TypeScript |
 | Styling | Tailwind CSS v4, mobile responsive |
@@ -214,7 +237,8 @@ pub struct ScoreEntry {
 | Stellar SDK | `@stellar/stellar-sdk` v14 |
 | Analytics | PostHog |
 | Error Monitoring | Sentry |
-| Deployment | Vercel (frontend), Stellar Testnet (contract) |
+| Fee Sponsorship | Stellar Fee Bump Transactions (gasless UX) |
+| Deployment | Vercel (frontend), Stellar Mainnet (contract) |
 
 ## Project Structure
 
@@ -228,19 +252,24 @@ My-Credit-Scoring/
 │   ├── app/
 │   │   ├── page.tsx               # Main UI + state management
 │   │   └── layout.tsx             # Providers + global CSS
+│   ├── app/
+│   │   └── api/fee-bump/route.ts  # Fee sponsorship API endpoint
 │   ├── components/
-│   │   ├── Contract.tsx           # Lookup / Submit / History tabs
+│   │   ├── Contract.tsx           # Lookup / Submit / History tabs + gasless toggle
 │   │   ├── Navbar.tsx             # Wallet connect UI
 │   │   ├── OnboardingModal.tsx    # 5-step guided setup
 │   │   ├── FeedbackModal.tsx      # Floating star rating form
 │   │   └── ui/                   # Animated card, shimmer button, etc.
-│   └── hooks/contract.ts          # Freighter + Soroban RPC helpers
+│   └── hooks/contract.ts          # Freighter + Soroban RPC + submitScoreGasless
 ├── scripts/
 │   ├── generate-interactions.mjs  # Generates 50 on-chain interactions
 │   ├── deploy-contract.sh
 │   └── fund-testnet.sh
 ├── docs/
-│   └── user-feedback-responses.csv
+│   ├── user-feedback-responses.csv
+│   ├── SECURITY_REVIEW.md            # Smart contract security review
+│   ├── TECHNICAL_BLOG.md             # Ecosystem contribution blog post
+│   └── screenshots/
 ├── PITCH.md
 ├── CONTRIBUTING.md
 └── README.md
@@ -398,6 +427,102 @@ Active usage is further evidenced by 52 Google Form responses with wallet addres
 **[Watch on YouTube →](https://youtu.be/7mKTYzhx8IM)**
 
 The demo covers the full user flow: onboarding modal, wallet connection, Friendbot funding, score submission (signed with Freighter, confirmed in ~5s), score lookup with percentile, JSON export, Request Evaluation link, and the PostHog analytics dashboard.
+
+## Advanced Feature: Fee Sponsorship (Gasless Transactions)
+
+Score submissions are normally free to read but require a small XLM fee (~0.0001 XLM) to write to the ledger. **Fee sponsorship** removes this barrier entirely using Stellar's native [fee bump transaction](https://developers.stellar.org/docs/learn/encyclopedia/transactions-specialized/fee-bump-transactions) mechanism.
+
+### How it works
+
+1. The user builds and signs the inner `submit_score` transaction via Freighter — **no XLM required in their wallet**.
+2. The signed XDR is posted to the server-side API endpoint (`/api/fee-bump`).
+3. The server wraps it in a `FeeBumpTransaction` using a sponsor account and pays the fee.
+4. The transaction is submitted to the Soroban RPC node.
+
+### Enabling gasless mode
+
+In the Submit tab, toggle **Gasless Mode** on. The button label changes to "Submit Score (Gasless)" and the status message confirms fee sponsorship is active.
+
+### Server configuration
+
+Add your sponsor account's secret key to the server environment:
+
+```bash
+SPONSOR_SECRET_KEY=S...your_funded_mainnet_secret_key
+```
+
+The sponsor account needs only a small XLM balance — each `submit_score` costs approximately 0.0001 XLM. 10,000 submissions cost ~1 XLM.
+
+### Implementation
+
+- **API route:** [`client/app/api/fee-bump/route.ts`](./client/app/api/fee-bump/route.ts)
+- **Client hook:** `submitScoreGasless()` in [`client/hooks/contract.ts`](./client/hooks/contract.ts)
+- **UI toggle:** gasless mode switch in the Submit tab ([`client/components/Contract.tsx`](./client/components/Contract.tsx))
+
+---
+
+## Security Review
+
+A full security review of the smart contract has been completed. See [`docs/SECURITY_REVIEW.md`](./docs/SECURITY_REVIEW.md).
+
+**Summary:**
+- All write operations require evaluator authentication via `require_auth()`
+- Input range validated (0–1000)
+- 24-hour cooldown prevents rapid re-evaluation
+- Initialization guard prevents re-deployment attacks
+- No integer overflow risk (u64 accumulation)
+- Pre-mainnet: migrate to persistent storage + add admin multi-sig
+
+---
+
+## Ecosystem Contribution: Technical Blog
+
+A step-by-step technical blog post covering Soroban contract development, Freighter integration, fee sponsorship, and anti-Sybil design is available at:
+
+**[docs/TECHNICAL_BLOG.md](./docs/TECHNICAL_BLOG.md)**
+
+Topics covered:
+- Writing a Rust/Soroban contract with `require_auth()` and cooldown enforcement
+- Simulation vs submission — how Soroban RPC works
+- Fee bump transactions for gasless UX
+- Running unit tests with Soroban testutils
+
+---
+
+## Product Marketing
+
+### Twitter/X Launch
+
+A product launch thread was posted on Twitter/X tagging `@StellarOrg` and `@SorobanNetwork`. The thread covers:
+- What the protocol does (permissionless, on-chain credit scores)
+- How fee sponsorship makes it gasless
+- Links to the live app, demo video, and GitHub
+
+*(Add your Twitter/X post URL here after posting)*
+
+---
+
+## Phase 3 Improvement Plan (Based on User Feedback)
+
+After collecting 52 user responses (avg rating 4.4/5) in Phase 2, the following improvements were prioritized for Phase 3:
+
+| Feedback | Planned Fix | Priority |
+|---|---|---|
+| "I don't want to hold XLM just to submit a score" | ✅ Fee sponsorship (gasless mode) implemented | Done |
+| "What if I stop using the app — does my data disappear?" | Migrate to persistent storage on mainnet | High |
+| "Would be great if other dApps could query my score" | Publish score as a Stellar SEP asset or REST API | High |
+| "Can I see score trends over time?" | Score timeline chart added in History tab | Done |
+| "Mobile experience could be smoother" | Further mobile optimization pass | Medium |
+| "Multi-sig score verification would increase trust" | Add 2-of-3 multi-sig endorsement panels | Medium |
+| "AI-based scoring from transaction history" | AI scoring model trained on on-chain data | Phase 4 |
+
+Commits implementing feedback-driven changes:
+- Fee sponsorship gasless mode: *(this PR — see latest commit)*
+- Timeline chart: [`6f5df39`](https://github.com/ankit7960/My-Credit-Scoring/commit/6f5df399e98caace33d911eb9c2ec4b8edb2ea16)
+- Address validation: [`b6c1769`](https://github.com/ankit79960/My-Credit-Scoring/commit/b6c1769461fb2df8dfb5ae2d3eab26b9466dd873)
+- Keyboard navigation: [`3e976bd`](https://github.com/ankit79960/My-Credit-Scoring/commit/3e976bd6710109b8b4dc2653294bdfdc60215064)
+
+---
 
 ## Roadmap
 

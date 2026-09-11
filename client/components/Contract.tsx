@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import {
   submitScore,
+  submitScoreGasless,
   getScores,
   getEvaluatorCount,
   getAverageScore,
@@ -364,6 +365,7 @@ export default function ContractUI({ walletAddress, onConnect, isConnecting }: C
   const [submitScoreValue, setSubmitScoreValue] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [gaslessMode, setGaslessMode] = useState(false);
 
   // Lookup state
   const [lookupUser, setLookupUser] = useState("");
@@ -492,10 +494,12 @@ export default function ContractUI({ walletAddress, onConnect, isConnecting }: C
     setError(null);
     setTxHash(null);
     setIsSubmitting(true);
-    setTxStatus("Awaiting signature...");
+    setTxStatus(gaslessMode ? "Awaiting signature (fee sponsored)..." : "Awaiting signature...");
     try {
-      const hash = await submitScore(walletAddress, submitUser.trim(), scoreNum, walletAddress);
-      trackContractInteraction("submit_score", { score: scoreNum });
+      const hash = gaslessMode
+        ? await submitScoreGasless(walletAddress, submitUser.trim(), scoreNum, walletAddress)
+        : await submitScore(walletAddress, submitUser.trim(), scoreNum, walletAddress);
+      trackContractInteraction("submit_score", { score: scoreNum, gasless: gaslessMode });
       setTxHash(hash);
       setTxStatus("Score submitted on-chain!");
       setSubmitUser("");
@@ -1169,6 +1173,41 @@ export default function ContractUI({ walletAddress, onConnect, isConnecting }: C
                   );
                 })()}
 
+                {/* Gasless toggle */}
+                <div className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-[#0d0d0d] px-4 py-3">
+                  <div>
+                    <p className="text-xs font-medium text-white/60">Gasless Mode</p>
+                    <p className="text-[10px] text-white/25 mt-0.5">Fee-sponsored — you pay no XLM</p>
+                  </div>
+                  <button
+                    onClick={() => setGaslessMode((v) => !v)}
+                    className={cn(
+                      "relative h-5 w-9 rounded-full border transition-all duration-200",
+                      gaslessMode
+                        ? "border-[#7c6cf0]/40 bg-[#7c6cf0]/20"
+                        : "border-white/[0.10] bg-white/[0.04]"
+                    )}
+                    aria-pressed={gaslessMode}
+                    aria-label="Toggle gasless mode"
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all duration-200",
+                        gaslessMode
+                          ? "left-[18px] bg-[#7c6cf0]"
+                          : "left-0.5 bg-white/30"
+                      )}
+                    />
+                  </button>
+                </div>
+
+                {gaslessMode && (
+                  <div className="flex items-start gap-2 rounded-xl border border-[#7c6cf0]/15 bg-[#7c6cf0]/[0.04] px-3 py-2.5 text-xs text-[#7c6cf0]/70">
+                    <svg className="mt-0.5 shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    A fee sponsor covers the transaction fee. You only sign the inner transaction — no XLM balance required.
+                  </div>
+                )}
+
                 {walletAddress ? (
                   <div className="space-y-2">
                     {alreadyEvaluated && (
@@ -1178,7 +1217,13 @@ export default function ContractUI({ walletAddress, onConnect, isConnecting }: C
                       </div>
                     )}
                     <ShimmerButton onClick={handleSubmitScore} disabled={isSubmitting || isCheckingEvaluator} shimmerColor="#7c6cf0" className="w-full">
-                      {isSubmitting ? <><SpinnerIcon /> Submitting...</> : isCheckingEvaluator ? <><SpinnerIcon /> Checking...</> : alreadyEvaluated ? <><StarIcon /> Update Score</> : <><StarIcon /> Submit Score</>}
+                      {isSubmitting
+                        ? <><SpinnerIcon /> {gaslessMode ? "Submitting (sponsored)..." : "Submitting..."}</>
+                        : isCheckingEvaluator
+                        ? <><SpinnerIcon /> Checking...</>
+                        : alreadyEvaluated
+                        ? <><StarIcon /> Update Score</>
+                        : <><StarIcon /> {gaslessMode ? "Submit Score (Gasless)" : "Submit Score"}</>}
                     </ShimmerButton>
                   </div>
                 ) : (
